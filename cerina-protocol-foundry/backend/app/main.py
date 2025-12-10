@@ -90,6 +90,30 @@ async def stream(run_id: str):
     """
     return StreamingResponse(event_stream(run_id), media_type="text/event-stream")
 
+# Update intent for an existing run (partial update)
+@app.patch("/run/{run_id}/intent")
+async def update_intent(run_id: str, payload: dict):
+    """
+    Update the run's intent_text in-state and emit a checkpoint.
+    Body: {"intent": "<new intent text>"}
+    Returns: {"ok": True, "run_id": run_id}
+    """
+    new_intent = payload.get("intent")
+    if new_intent is None:
+        raise HTTPException(status_code=400, detail="intent required in body")
+
+    cp = load_last_checkpoint(run_id)
+    if not cp:
+        raise HTTPException(status_code=404, detail="run not found")
+
+    state = cp.state_snapshot
+    old_intent = state.get("intent_text")
+    state["intent_text"] = new_intent
+    # mark that intent was updated by user
+    save_checkpoint(run_id, "human", state, f"intent updated from '{old_intent}'")
+
+    return {"ok": True, "run_id": run_id, "intent": new_intent}
+
 @app.get("/status/{run_id}")
 async def status(run_id: str):
     cp = load_last_checkpoint(run_id)

@@ -14,7 +14,7 @@ function formatTime(iso?: string) {
     const d = new Date(iso);
     return d.toLocaleString();
   } catch {
-    return iso || "";
+    return iso;
   }
 }
 
@@ -24,8 +24,10 @@ export default function App() {
   const [draft, setDraft] = useState<string>("");
   const [status, setStatus] = useState<string>("idle");
   const [theme, setTheme] = useState<"light" | "dark">("light");
-  const [summary, setSummary] = useState<string | null>(null);
+  const [finalSummary, setFinalSummary] = useState<string>("");
   const [loadingSummary, setLoadingSummary] = useState<boolean>(false);
+  const [intentText, setIntentText] = useState<string>("Create a CBT exercise for insomnia");
+  const [intentSaving, setIntentSaving] = useState<boolean>(false);
   const eventsRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -41,20 +43,53 @@ export default function App() {
 
   async function startRun() {
     setStatus("starting");
-    setSummary(null);
     try {
       const resp = await fetch("http://127.0.0.1:8000/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intent: "Create a CBT exercise for insomnia" }),
+        body: JSON.stringify({ intent: intentText }),
       });
       const data = await resp.json();
       setRunId(data.run_id);
       setStatus("running");
+      setFinalSummary("");
+      setEvents([]);
+      setDraft("");
     } catch (err) {
       console.error(err);
       setStatus("error");
       alert("Failed to contact backend. Is the server running?");
+    }
+  }
+
+  // Update intent on the running run (PATCH)
+  async function updateIntentOnRun() {
+    if (!runId) return alert("No active run to update");
+    setIntentSaving(true);
+    try {
+      const resp = await fetch(`http://127.0.0.1:8000/run/${runId}/intent`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: intentText }),
+      });
+      const j = await resp.json();
+      if (!j.ok) throw new Error("Failed to update intent");
+      // add an event locally to show instant feedback
+      setEvents((prev) => [
+        ...prev,
+        {
+          agent: "human",
+          timestamp: new Date().toISOString(),
+          note: `intent updated to: ${intentText}`,
+          state: { intent_text: intentText },
+        },
+      ]);
+      alert("Intent updated for run");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to update intent on server");
+    } finally {
+      setIntentSaving(false);
     }
   }
 
@@ -70,6 +105,10 @@ export default function App() {
         }
         if (payload.state?.status) {
           setStatus(payload.state.status);
+        }
+        // if agent writes an intent_text into state, sync local input
+        if (payload.state?.intent_text) {
+          setIntentText(payload.state.intent_text);
         }
       } catch (err) {
         console.error("Failed to parse SSE:", err);
@@ -108,22 +147,17 @@ export default function App() {
   }
 
   async function generateSummary() {
-    if (!runId) return alert("No run selected");
+    if (!runId) return alert("No run to summarize");
     setLoadingSummary(true);
     try {
       const resp = await fetch(`http://127.0.0.1:8000/summary/${runId}`);
       const j = await resp.json();
-      setSummary(j.summary || null);
-      // append a checkpoint-like event for visibility (optional)
-      setEvents((prev) => [
-        ...prev,
-        { agent: "summary_agent", timestamp: new Date().toISOString(), note: "final summary generated", state: { summary: j.summary } },
-      ]);
+      setFinalSummary(j.summary || "");
+      setLoadingSummary(false);
     } catch (err) {
       console.error(err);
-      alert("Failed to generate summary. Check backend logs.");
-    } finally {
       setLoadingSummary(false);
+      alert("Summary generation failed. Check backend logs.");
     }
   }
 
@@ -134,8 +168,15 @@ export default function App() {
     );
   }
 
+  function copySummary() {
+    navigator.clipboard.writeText(finalSummary).then(
+      () => alert("Summary copied to clipboard"),
+      () => alert("Failed to copy")
+    );
+  }
+
   function downloadFinal() {
-    const dataStr = JSON.stringify({ runId, draft, summary, events }, null, 2);
+    const dataStr = JSON.stringify({ runId, draft, events, finalSummary }, null, 2);
     const blob = new Blob([dataStr], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -143,14 +184,6 @@ export default function App() {
     a.download = `cerina_run_${runId || "untitled"}.json`;
     a.click();
     URL.revokeObjectURL(url);
-  }
-
-  function resetAll() {
-    setEvents([]);
-    setDraft("");
-    setRunId(null);
-    setStatus("idle");
-    setSummary(null);
   }
 
   return (
@@ -162,19 +195,28 @@ export default function App() {
         </div>
 
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <div style={{ fontSize: 14, color: theme === "light" ? "#334155" : "#cbd5e1" }}>
-            Theme
-            <button
-              onClick={() => setTheme(theme === "light" ? "dark" : "light")}
-              style={styles.smallButton}
-            >
-              {theme === "light" ? "Dark" : "Light"}
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input
+              value={intentText}
+              onChange={(e) => setIntentText(e.target.value)}
+              style={styles.intentInput}
+            />
+            <button onClick={() => (runId ? updateIntentOnRun() : startRun())} style={styles.startButton}>
+              {runId ? (intentSaving ? "Saving…" : "Update Intent") : "Start Run"}
             </button>
           </div>
 
-          <button style={styles.startButton} onClick={startRun} disabled={status === "running" || status === "starting"}>
-            {status === "starting" ? "Starting…" : status === "running" ? "Running" : "Start Run"}
-          </button>
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <div style={{ fontSize: 14, color: theme === "light" ? "#334155" : "#cbd5e1" }}>
+              Theme
+              <button
+                onClick={() => setTheme(theme === "light" ? "dark" : "light")}
+                style={styles.smallButton}
+              >
+                {theme === "light" ? "Dark" : "Light"}
+              </button>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -225,21 +267,33 @@ export default function App() {
               Approve & Finalize
             </button>
 
-            <button onClick={generateSummary} style={styles.ghostButton} disabled={!runId || loadingSummary}>
+            <button onClick={generateSummary} style={{ ...styles.ghostButton, minWidth: 140 }} disabled={!runId || loadingSummary}>
               {loadingSummary ? "Generating…" : "Generate Summary"}
             </button>
 
-            <button onClick={resetAll} style={styles.ghostButton}>
+            <button onClick={() => { setEvents([]); setDraft(""); setRunId(null); setStatus("idle"); setFinalSummary(""); }} style={styles.ghostButton}>
               Reset
             </button>
           </div>
 
-          {summary && (
-            <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: theme === "light" ? "#fff" : "#081029", border: "1px solid #e6eef6" }}>
-              <h4 style={{ marginTop: 0 }}>Final Summary</h4>
-              <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>{summary}</p>
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>Final Summary</div>
+            <div style={styles.summaryControls}>
+              <button onClick={copySummary} style={styles.ghostButton} disabled={!finalSummary}>
+                Copy Summary
+              </button>
             </div>
-          )}
+
+            <div style={styles.summaryBoxContainer}>
+              {finalSummary ? (
+                <div style={styles.summaryBox}>{finalSummary}</div>
+              ) : (
+                <div style={{ color: "#94a3b8", padding: 12, borderRadius: 8, background: theme === "light" ? "#fff" : "#071018" }}>
+                  No summary yet. Generate a summary after approving.
+                </div>
+              )}
+            </div>
+          </div>
         </section>
       </main>
 
@@ -264,6 +318,14 @@ const styles: {[k: string]: React.CSSProperties} = {
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 14,
+  },
+  intentInput: {
+    minWidth: 420,
+    padding: "10px 12px",
+    borderRadius: 8,
+    border: "1px solid #e2e8f0",
+    fontSize: 14,
+    marginRight: 8,
   },
   startButton: {
     background: "#0f172a",
@@ -367,5 +429,29 @@ const styles: {[k: string]: React.CSSProperties} = {
     justifyContent: "space-between",
     color: "#94a3b8",
     fontSize: 13
-  }
+  },
+  // Summary UI
+  summaryControls: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: 8,
+    marginBottom: 8,
+  },
+  summaryBoxContainer: {
+    marginTop: 6,
+  },
+  summaryBox: {
+    whiteSpace: "pre-wrap",
+    overflowWrap: "break-word",
+    maxHeight: 400,
+    overflowY: "auto",
+    padding: 14,
+    borderRadius: 10,
+    border: "1px solid rgba(148,163,184,0.15)",
+    background: "#071426",
+    color: "#e6eef6",
+    fontSize: 14,
+    lineHeight: 1.5,
+    fontFamily: "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto",
+  },
 };
