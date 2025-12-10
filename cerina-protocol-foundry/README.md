@@ -394,7 +394,6 @@ Built for educational + prototype purposes using:
 * **Ollama / Transformers**
 
 ---
+![System Architecture](docs/image.png)
 
-Here is a **clean, professional architecture diagram** of your Cerina Protocol Foundry system, showing **LangGraph agents**, **FastAPI backend**, **checkpointing**, **frontend UI**, and **LLM integration**.
-
----
+![Terminal](docs/terminal.png)
