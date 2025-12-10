@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+sqlmodel
+pydantic
+python-dotenv
+sse-starlette
+ollama   
+langgraph 
+transformers   
