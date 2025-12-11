@@ -11,7 +11,7 @@ The system runs **fully locally** using:
 * Optionally: **Ollama**, **Local Transformers**, or any LangChain-compatible LLM
 
 ---
-
+![Image](docs/Blank%20diagram.png)
 ---
 
 # ⭐ **Features**
